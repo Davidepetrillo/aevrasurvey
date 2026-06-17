@@ -158,6 +158,14 @@ body {
   color: var(--ink);
 }
 
+/* a lone final option (odd count) sits centered across the row, not on one side */
+.options.cols-2 .opt:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+  justify-self: center;
+  min-width: calc(50% - 9px);   /* match a single column's width, gap is 18px */
+  justify-content: center;
+}
+
 /* ---------- text / email inputs ---------- */
 .field {
   margin-top: 36px;
@@ -338,6 +346,18 @@ body {
 .econ__n { font-size: clamp(26px, 3.2vw, 34px); font-weight: 300; letter-spacing: -.04em; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; }
 .econ__row--soft .econ__n { color: var(--ink-soft); font-size: 22px; }
 .econ__l { font-size: 12.5px; color: var(--ink-soft); letter-spacing: -.01em; }
+
+/* scale ramp: one workflow -> team -> company */
+.scale { margin-top: 26px; display: flex; align-items: stretch; gap: 12px; }
+.scale__step { flex: 1; display: flex; flex-direction: column; gap: 5px; padding-top: 16px; border-top: 2px solid var(--ink); }
+.scale__step:nth-child(3) { border-top-color: var(--ink-soft); }
+.scale__step:nth-child(5) { border-top-color: var(--line); }
+.scale__n { font-size: clamp(24px, 3vw, 32px); font-weight: 300; letter-spacing: -.04em; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; }
+.scale__l { font-size: 11.5px; color: var(--ink-soft); letter-spacing: -.01em; }
+.scale__v { margin-top: 2px; font-size: 13px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.scale__arrow { display: flex; align-items: center; color: var(--ink-faint); flex: 0 0 auto; }
+.scale__arrow svg { width: 18px; height: 18px; }
+.rep__sec .rep__lede { margin-top: 20px; }
 
 /* plan (Aevra output) */
 .plan__head { margin-top: 16px; font-size: clamp(22px, 3vw, 30px); font-weight: 300; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); max-width: 22em; }
@@ -622,7 +642,13 @@ body {
   .screen { padding-top: 4px; }
   .options { margin-top: 28px; gap: 10px; }
   .options.cols-2 { grid-template-columns: 1fr; }
+  /* single column on mobile: the lone-option centering no longer applies */
+  .options.cols-2 .opt:last-child:nth-child(odd) { grid-column: auto; justify-self: stretch; min-width: 0; }
   .opt { padding: 15px 22px; }
+  /* stack the scale ramp vertically */
+  .scale { flex-direction: column; gap: 0; }
+  .scale__arrow { transform: rotate(90deg); justify-content: center; padding: 6px 0; }
+  .scale__step { padding-bottom: 14px; }
   .foot { padding: 0 20px; height: 64px; }
   .q { font-size: clamp(26px, 8vw, 32px); }
   .field { margin-top: 28px; }
