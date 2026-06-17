@@ -29,6 +29,33 @@ const UI = {
 // {it, en} builder
 const b = (it, en) => ({ it, en });
 
+// short labels for the final recap
+const LABELS = {
+  nome: b('Nome', 'Name'),
+  email: b('Email', 'Email'),
+  cellulare: b('Telefono', 'Phone'),
+  azienda: b('Azienda', 'Company'),
+  ruolo: b('Ruolo', 'Role'),
+  settore: b('Settore', 'Sector'),
+  teamSize: b('Team', 'Team'),
+  numProcessi: b('Processi', 'Processes'),
+  ripetitivita: b('Ripetitività', 'Repetitiveness'),
+  maturita: b('Maturità', 'Maturity'),
+  processo: b('Processi', 'Processes'),
+  tipoGestionale: b('Gestionali', 'Software'),
+  nomeGestionale: b('Strumento', 'Tool'),
+  descrizione: b('Processo', 'Process'),
+  blocco: b('Criticità', 'Bottlenecks'),
+  frequenza: b('Frequenza', 'Frequency'),
+  durata: b('Durata', 'Duration'),
+  persone: b('Persone', 'People'),
+  dipendenza: b('Dipendenza', 'Dependency'),
+  documentazione: b('Documentazione', 'Documentation'),
+  errori: b('Errori', 'Errors'),
+  strumenti: b('Strumenti', 'Tools'),
+  obiettivo: b('Obiettivi', 'Goals')
+};
+
 const survey = [
   {
     type: 'intro',
@@ -42,6 +69,41 @@ const survey = [
   { id: 'cellulare', type: 'tel', optional: true, q: b('Cellulare', 'Phone'), placeholder: b('+39 333 1234567', '+44 7700 900123') },
   { id: 'azienda', type: 'text', q: b('Azienda', 'Company'), placeholder: b('Nome azienda', 'Company name') },
   { id: 'ruolo', type: 'text', optional: true, q: b('Ruolo', 'Role'), placeholder: b('CEO, HR, Operations, Finance…', 'CEO, HR, Operations, Finance…') },
+
+  {
+    id: 'settore', type: 'single', cols: 2,
+    q: b('In che settore operate?', 'What sector are you in?'),
+    options: [
+      b('Manifattura', 'Manufacturing'),
+      b('Servizi e consulenza', 'Services & consulting'),
+      b('Finanza e assicurazioni', 'Finance & insurance'),
+      b('Settore pubblico', 'Public sector'),
+      b('Tech e software', 'Tech & software'),
+      b('Retail ed eCommerce', 'Retail & eCommerce'),
+      b('Sanità', 'Healthcare'),
+      b('Logistica', 'Logistics')
+    ]
+  },
+  {
+    id: 'teamSize', type: 'single', cols: 2,
+    q: b('Quanto è grande il team o reparto?', 'How large is the team or department?'),
+    options: [b('1–5 persone', '1–5 people'), b('6–20 persone', '6–20 people'), b('21–50 persone', '21–50 people'), b('Oltre 50', 'Over 50')]
+  },
+  {
+    id: 'numProcessi', type: 'single', cols: 2,
+    q: b('Quanti processi ricorrenti gestite?', 'How many recurring processes do you run?'),
+    options: [b('1–5', '1–5'), b('6–15', '6–15'), b('16–40', '16–40'), b('Oltre 40', 'Over 40')]
+  },
+  {
+    id: 'ripetitivita', type: 'single', cols: 2,
+    q: b('Quanto è ripetitivo il lavoro del team?', 'How repetitive is the team’s work?'),
+    options: [b('Poco', 'Low'), b('Abbastanza', 'Moderate'), b('Molto', 'High'), b('Quasi tutto', 'Almost all')]
+  },
+  {
+    id: 'maturita', type: 'single', cols: 2,
+    q: b('A che punto siete con l’automazione?', 'Where are you with automation?'),
+    options: [b('Nessuna', 'None'), b('Qualche strumento', 'A few tools'), b('Automazione parziale', 'Partly automated'), b('Avanzata', 'Advanced')]
+  },
 
   {
     id: 'processo', type: 'multi', cols: 2, optional: true,
@@ -152,6 +214,7 @@ const survey = [
     ]
   },
 
+  { type: 'report' },
   { type: 'outro' }
 ];
 
@@ -305,6 +368,7 @@ function render() {
   if (fill) fill.style.width = progressFor(i) + '%';
   setProgressVar();
   document.body.classList.toggle('is-outro', item.type === 'outro');
+  document.body.classList.toggle('is-report', item.type === 'report');
   buildDots();
   updateNav();
   focusFirst(screen);
@@ -316,8 +380,13 @@ function focusFirst(screen) {
   if (input) setTimeout(() => input.focus(), 360);
 }
 
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
 function buildScreen(item) {
   if (item.type === 'intro') return buildIntro(item);
+  if (item.type === 'report') return buildReport();
   if (item.type === 'outro') return buildOutro(item);
 
   const screen = el(`<section class="screen ${item.cols === 2 ? 'wide' : ''}"></section>`);
@@ -468,6 +537,317 @@ function buildIntro(item) {
   return screen;
 }
 
+/* ---------- report model ---------- */
+
+// find which option index an answer corresponds to (language-independent)
+function optionIndex(id, value) {
+  const item = survey.find((s) => s.id === id);
+  if (!item || !item.options) return -1;
+  return item.options.findIndex((o) => tr(o) === value);
+}
+function selectedIndices(id) {
+  const a = answers[id];
+  if (!Array.isArray(a)) return [];
+  return a.map((v) => optionIndex(id, v)).filter((x) => x >= 0);
+}
+
+// market benchmarks (fully-loaded €/h) per process area, option index of `processo`
+const COST_BY_PROCESS = [45, 55, 50, 42, 45, 50, 60, 40, 52]; // HR, Finance, Sales, Ops, Suppliers, Doc, IT, Reporting, Approvals
+const SECTOR_MULT = [0.95, 1.05, 1.20, 0.90, 1.15, 0.92, 1.00, 0.92]; // settore index
+const OCC_PER_MONTH = [0.5, 1, 4.33, 21.7];   // raro, mensile, settimanale, giornaliero
+const HOURS_PER_OCC = [0.2, 0.6, 2.5, 5];     // <15m, 15-60m, 1-4h, >mezza giornata
+const PEOPLE = [1, 2.5, 6, 12];               // 1, 2-3, 4-10, >10
+const RISK4 = [14, 44, 72, 92];               // 4-level scales -> 0-100 points
+const NUM_PROC_MID = [3, 10, 25, 50];         // numProcessi midpoints
+const MATURITY_PTS = [15, 40, 65, 90];        // automation maturity capability
+const AUTOMATABLE = 0.75;
+
+function computeReport() {
+  const idx = (id) => optionIndex(id, answers[id]);
+  const at = (arr, id, d) => (arr[idx(id)] != null ? arr[idx(id)] : d);
+
+  const occ = at(OCC_PER_MONTH, 'frequenza', 4.33);
+  const hrs = at(HOURS_PER_OCC, 'durata', 1);
+  const ppl = at(PEOPLE, 'persone', 2.5);
+
+  // operational-risk factors (0-100)
+  const fDep = at(RISK4, 'dipendenza', 50);
+  const fDoc = at(RISK4, 'documentazione', 50);
+  const fErr = at(RISK4, 'errori', 50);
+  const blocco = selectedIndices('blocco');
+  const fBlk = Math.min(95, blocco.length * 16);
+  const repIdx = idx('ripetitivita');
+  const fRep = RISK4[repIdx] != null ? RISK4[repIdx] : 50;
+  const matIdx = idx('maturita');
+  const maturity = MATURITY_PTS[matIdx] != null ? MATURITY_PTS[matIdx] : 40;
+  const fGap = 100 - maturity; // automation gap as an exposure axis
+  const risk = Math.round(0.28 * fDep + 0.22 * fDoc + 0.22 * fErr + 0.16 * fBlk + 0.12 * fGap);
+
+  // fully-loaded hourly cost: process-area benchmark × sector multiplier
+  const procIdx = selectedIndices('processo');
+  const baseCost = procIdx.length
+    ? procIdx.reduce((s, k) => s + (COST_BY_PROCESS[k] || 48), 0) / procIdx.length
+    : 48;
+  const sectorMult = SECTOR_MULT[idx('settore')] != null ? SECTOR_MULT[idx('settore')] : 1;
+  const cost = Math.round(baseCost * sectorMult);
+
+  // single workflow
+  const spentMonth = occ * hrs * ppl;
+  const recMonth = spentMonth * AUTOMATABLE;
+  const recYear = recMonth * 12;
+  const valMonth = recMonth * cost;
+  const valYear = recYear * cost;
+
+  // portfolio / team extrapolation, conservative, comparable processes add smaller savings
+  const PORTFOLIO_FACTOR = [1.8, 2.6, 3.6, 4.8];
+  const pf = PORTFOLIO_FACTOR[idx('numProcessi')] != null ? PORTFOLIO_FACTOR[idx('numProcessi')] : 2.6;
+  const teamRecYear = recYear * pf;
+  const teamValYear = valYear * pf;
+
+  // automation potential %
+  const potential = Math.round(Math.min(92, ((repIdx >= 0 ? repIdx + 1 : 2) / 4) * 55 + (fGap / 100) * 45));
+
+  // 12-month cumulative value (logistic adoption ramp to run-rate)
+  const monthly = teamValYear / 12;
+  const cum = [];
+  let acc = 0;
+  for (let m = 1; m <= 12; m++) { acc += monthly * (1 / (1 + Math.exp(-(m - 3.5) / 1.4))); cum.push(acc); }
+
+  return {
+    risk, fDep, fDoc, fErr, fBlk, fRep, fGap, maturity,
+    cost, spentMonth, recMonth, recYear, valMonth, valYear,
+    pf, teamRecYear, teamValYear, potential, cum, blockCount: blocco.length
+  };
+}
+
+function riskBand(score) {
+  if (score < 30) return { it: 'Basso', en: 'Low' };
+  if (score < 55) return { it: 'Medio', en: 'Moderate' };
+  if (score < 75) return { it: 'Alto', en: 'High' };
+  return { it: 'Critico', en: 'Critical' };
+}
+
+const eur = (n) => new Intl.NumberFormat(L === 'en' ? 'en-IE' : 'it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round(n));
+const numFmt = (n) => new Intl.NumberFormat(L === 'en' ? 'en-IE' : 'it-IT', { maximumFractionDigits: n < 10 ? 1 : 0 }).format(n);
+
+function tagsFor(id) {
+  const a = answers[id];
+  if (!Array.isArray(a)) return [];
+  return a.map((v) => (v === OTHER ? (answers[id + '_altro'] || '') : v)).filter(Boolean);
+}
+
+function countUp(elm, to, fmt, dur) {
+  if (reduced) { elm.textContent = fmt(to); return; }
+  const start = performance.now();
+  const step = (now) => {
+    const p = Math.min(1, (now - start) / (dur || 1000));
+    const e = 1 - Math.pow(1 - p, 3);
+    elm.textContent = fmt(to * e);
+    if (p < 1) requestAnimationFrame(step); else elm.textContent = fmt(to);
+  };
+  requestAnimationFrame(step);
+}
+
+// --- SVG charts (no libraries) ---
+function radarSVG(axes) {
+  const cx = 120, cy = 120, R = 84, n = axes.length;
+  const pt = (val, i) => {
+    const a = (-90 + i * (360 / n)) * Math.PI / 180;
+    const r = R * val / 100;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const rings = [25, 50, 75, 100].map((k) => {
+    const p = axes.map((_, i) => pt(k, i).map((v) => v.toFixed(1)).join(',')).join(' ');
+    return `<polygon class="radar__ring" points="${p}"/>`;
+  }).join('');
+  const spokes = axes.map((_, i) => { const [x, y] = pt(100, i); return `<line class="radar__spoke" x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`; }).join('');
+  const poly = axes.map((ax, i) => pt(ax.v, i).map((v) => v.toFixed(1)).join(',')).join(' ');
+  const dots = axes.map((ax, i) => { const [x, y] = pt(ax.v, i); return `<circle class="radar__dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.4" data-l="${esc(ax.label)}" data-v="${Math.round(ax.v)}"/>`; }).join('');
+  const labels = axes.map((ax, i) => {
+    const [x, y] = pt(118, i);
+    const anchor = x < cx - 6 ? 'end' : x > cx + 6 ? 'start' : 'middle';
+    return `<text class="radar__lbl" x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="${anchor}">${esc(ax.short)}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 240 240" class="radar__svg">${rings}${spokes}<polygon class="radar__area" points="${poly}"/>${dots}${labels}</svg>`;
+}
+
+function areaSVG(cum) {
+  const n = cum.length, max = cum[n - 1] || 1;
+  const X = (i) => (i / (n - 1)) * 100;
+  const Y = (v) => 92 - (v / max) * 84;
+  const line = cum.map((v, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(2)},${Y(v).toFixed(2)}`).join(' ');
+  const area = `M0,100 ` + cum.map((v, i) => `L${X(i).toFixed(2)},${Y(v).toFixed(2)}`).join(' ') + ` L100,100 Z`;
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="proj__svg">
+    <path class="proj__area" d="${area}"/>
+    <path class="proj__line" d="${line}" vector-effect="non-scaling-stroke"/>
+  </svg>`;
+}
+
+function buildReport() {
+  const R = computeReport();
+  const band = riskBand(R.risk);
+  const en = L === 'en';
+  const company = (answers.azienda || '').trim();
+  const dateStr = new Date().toLocaleDateString(en ? 'en-GB' : 'it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+  const autoPct = Math.round(AUTOMATABLE * 100);
+
+  // concise, data-driven findings (essential only)
+  const pool = [
+    { s: R.fDep, it: R.fDep >= 70 ? 'Dipendenza critica da una sola persona.' : 'Forte dipendenza da persone chiave.', en: R.fDep >= 70 ? 'Critical dependency on one person.' : 'Strong key-person dependency.' },
+    { s: R.fDoc, it: R.fDoc >= 70 ? 'Processo non documentato.' : 'Documentazione solo parziale.', en: R.fDoc >= 70 ? 'Process is undocumented.' : 'Documentation is only partial.' },
+    { s: R.fErr, it: R.fErr >= 70 ? 'Errori frequenti sui passaggi manuali.' : 'Errori ricorrenti da controllo manuale.', en: R.fErr >= 70 ? 'Frequent errors on manual steps.' : 'Recurring errors from manual checks.' },
+    { s: R.fBlk, it: R.blockCount + ' colli di bottiglia rilevati.', en: R.blockCount + ' bottlenecks identified.' }
+  ].filter((f) => f.s >= 45).sort((a, b) => b.s - a.s).slice(0, 3);
+  const timeFind = { it: numFmt(R.spentMonth) + ' ore/mese assorbite dal processo.', en: numFmt(R.spentMonth) + ' hours/month absorbed today.' };
+  const findings = [timeFind].concat(pool).slice(0, 3);
+
+  const axes = [
+    { v: R.fDep, short: en ? 'Depend' : 'Dipend', label: en ? 'Key-person dependency' : 'Dipendenza da persona' },
+    { v: R.fDoc, short: en ? 'Docs' : 'Doc', label: en ? 'Documentation gap' : 'Documentazione assente' },
+    { v: R.fErr, short: en ? 'Errors' : 'Errori', label: en ? 'Error frequency' : 'Frequenza errori' },
+    { v: R.fBlk, short: en ? 'Blocks' : 'Blocchi', label: en ? 'Bottlenecks' : 'Colli di bottiglia' },
+    { v: R.fGap, short: 'Gap', label: en ? 'Automation gap' : 'Gap di automazione' }
+  ];
+
+  const T = en ? {
+    head: 'Operational assessment', verdict: 'Recoverable value / year',
+    lede: 'recoverable by automating recurring work, without changing your tools.',
+    kRisk: 'Operational risk', kHours: 'Hours / year', kWf: 'Value / workflow', kPot: 'Automation potential',
+    exposure: 'Exposure', econ: 'Economics', wf: 'This workflow / yr', team: 'Across the team / yr', firstYear: 'First year',
+    planlbl: 'The plan', planHead: 'How we step in, without changing how you work.',
+    method: 'Modelled on market benchmarks. ' + autoPct + '% automatable, loaded cost about ' + eur(R.cost) + '/h.',
+    ctaLine: eur(R.teamValYear) + ' a year, recoverable. Let’s map the first workflow.', cta: 'Book a call'
+  } : {
+    head: 'Analisi operativa', verdict: 'Valore recuperabile / anno',
+    lede: 'recuperabili automatizzando il lavoro ricorrente, senza cambiare i vostri strumenti.',
+    kRisk: 'Rischio operativo', kHours: 'Ore / anno', kWf: 'Valore / workflow', kPot: 'Potenziale automazione',
+    exposure: 'Esposizione', econ: 'Economia', wf: 'Questo workflow / anno', team: 'Sul team / anno', firstYear: 'Primo anno',
+    planlbl: 'Il piano', planHead: 'Come interveniamo, senza cambiare come lavorate.',
+    method: 'Stime su benchmark di mercato. ' + autoPct + '% automatizzabile, costo aziendale circa ' + eur(R.cost) + '/h.',
+    ctaLine: eur(R.teamValYear) + ' l’anno, recuperabili. Mappiamo il primo workflow.', cta: 'Prenota una call'
+  };
+
+  const plan = en ? [
+    'We capture the process once, inside the tools you already use.',
+    'An agent runs it every time, with checks on the critical steps.',
+    'We extend it to your other recurring processes.'
+  ] : [
+    'Catturiamo il processo una volta, dentro gli strumenti che già usate.',
+    'Un agente lo esegue ogni volta, con controlli sui passaggi critici.',
+    'Lo estendiamo agli altri processi ricorrenti.'
+  ];
+
+  const screen = el('<section class="screen report"></section>');
+  screen.innerHTML = `
+    <header class="rep__head"><span>${T.head}</span><span>${esc(company || '')}${company ? ' · ' : ''}${dateStr}</span></header>
+
+    <div class="rep__hero">
+      <span class="rep__eyebrow">${T.verdict}</span>
+      <div class="rep__heronum" data-count="${Math.round(R.teamValYear)}" data-fmt="eur">0</div>
+      <p class="rep__lede">${T.lede}</p>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><span class="kpi__n" data-count="${R.risk}" data-fmt="int">0</span><span class="kpi__l">${T.kRisk}</span><span class="kpi__t">${tr(band)}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.teamRecYear)}" data-fmt="num">0</span><span class="kpi__l">${T.kHours}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.valYear)}" data-fmt="eur">0</span><span class="kpi__l">${T.kWf}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${R.potential}" data-fmt="pct">0</span><span class="kpi__l">${T.kPot}</span></div>
+    </div>
+
+    <section class="rep__sec">
+      <span class="rep__seclbl">${T.exposure}</span>
+      <div class="sec__split">
+        <div class="radar">${radarSVG(axes)}<div class="chart-tip" data-tip></div></div>
+        <ul class="findings">${findings.map((f) => `<li>${esc(tr(f))}</li>`).join('')}</ul>
+      </div>
+    </section>
+
+    <section class="rep__sec">
+      <span class="rep__seclbl">${T.econ}</span>
+      <div class="sec__split">
+        <div class="proj__chart">${areaSVG(R.cum)}<span class="proj__cursor" data-cursor></span><span class="proj__dot" data-dot></span><div class="chart-tip" data-tip></div></div>
+        <div class="econ">
+          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.valYear)}" data-fmt="eur">0</span><span class="econ__l">${T.wf}</span></div>
+          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.teamValYear)}" data-fmt="eur">0</span><span class="econ__l">${T.team}</span></div>
+          <div class="econ__row econ__row--soft"><span class="econ__n" data-count="${Math.round(R.cum[R.cum.length - 1])}" data-fmt="eur">0</span><span class="econ__l">${T.firstYear}</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="rep__sec rep__sec--plan">
+      <span class="rep__seclbl">${T.planlbl}</span>
+      <h2 class="plan__head">${T.planHead}</h2>
+      <ol class="plan">${plan.map((p) => `<li>${esc(p)}</li>`).join('')}</ol>
+    </section>
+
+    <p class="rep__method">${esc(T.method)}</p>
+
+    <div class="rep__cta">
+      <p class="rep__ctaline">${esc(T.ctaLine)}</p>
+      <button class="btn btn--lg" data-cta type="button">${T.cta} ${ICON.arrow}</button>
+    </div>`;
+
+  screen.querySelector('[data-cta]').addEventListener('click', next);
+
+  requestAnimationFrame(() => {
+    screen.querySelectorAll('[data-count]').forEach((elm) => {
+      const to = parseFloat(elm.dataset.count);
+      const f = elm.dataset.fmt === 'eur' ? eur : elm.dataset.fmt === 'num' ? numFmt : elm.dataset.fmt === 'pct' ? ((x) => Math.round(x) + '%') : ((x) => Math.round(x));
+      countUp(elm, to, f, 1200);
+    });
+    attachRadarTip(screen);
+    attachProjTip(screen, R.cum);
+  });
+
+  return screen;
+}
+
+function attachRadarTip(screen) {
+  const wrap = screen.querySelector('.radar');
+  const tip = wrap && wrap.querySelector('[data-tip]');
+  if (!wrap || !tip) return;
+  wrap.querySelectorAll('.radar__dot').forEach((dot) => {
+    const show = () => {
+      const wr = wrap.getBoundingClientRect();
+      const dr = dot.getBoundingClientRect();
+      tip.textContent = `${dot.dataset.l} · ${dot.dataset.v}`;
+      tip.style.left = (dr.left - wr.left + dr.width / 2) + 'px';
+      tip.style.top = (dr.top - wr.top - 6) + 'px';
+      tip.classList.add('on');
+      dot.classList.add('on');
+    };
+    const hide = () => { tip.classList.remove('on'); dot.classList.remove('on'); };
+    dot.addEventListener('mouseenter', show);
+    dot.addEventListener('mouseleave', hide);
+  });
+}
+
+function attachProjTip(screen, cum) {
+  const chart = screen.querySelector('.proj__chart');
+  if (!chart) return;
+  const cursor = chart.querySelector('[data-cursor]');
+  const dot = chart.querySelector('[data-dot]');
+  const tip = chart.querySelector('[data-tip]');
+  const n = cum.length, max = cum[n - 1] || 1;
+  const move = (e) => {
+    const r = chart.getBoundingClientRect();
+    let p = (e.clientX - r.left) / r.width;
+    p = Math.max(0, Math.min(1, p));
+    const i = Math.round(p * (n - 1));
+    const xPct = (i / (n - 1)) * 100;
+    const yPct = 92 - (cum[i] / max) * 84;
+    cursor.style.left = xPct + '%';
+    dot.style.left = xPct + '%';
+    dot.style.top = yPct + '%';
+    tip.textContent = `${L === 'en' ? 'Month' : 'Mese'} ${i + 1} · ${eur(cum[i])}`;
+    tip.style.left = xPct + '%';
+    tip.style.top = (yPct - 8) + '%';
+    chart.classList.add('on');
+  };
+  chart.addEventListener('pointermove', move);
+  chart.addEventListener('pointerleave', () => chart.classList.remove('on'));
+}
+
 function buildOutro() {
   try { localStorage.setItem('aevra_survey', JSON.stringify(answers)); } catch (e) {}
   console.log('Aevra, risposte:', answers);
@@ -512,7 +892,7 @@ function attachParallax(screen) {
 
   // base overscan so the translated layer NEVER exposes the background behind it
   const S = 1.08;
-  const MAX = 14; // px of travel — kept well inside the overscan margin
+  const MAX = 14; // px of travel, kept well inside the overscan margin
   layer.style.transform = `translate3d(0,0,0) scale(${S})`;
 
   const move = (e) => {
@@ -546,7 +926,7 @@ function canAdvance() {
   const item = survey[i];
   if (item.type === 'outro' || i >= survey.length - 1) return false;
   if (i < furthest) return true;            // already been further, free to move
-  if (item.type === 'intro') return true;
+  if (item.type === 'intro' || item.type === 'report') return true;
   return item.optional || validate(item);   // new ground, must be answerable
 }
 
