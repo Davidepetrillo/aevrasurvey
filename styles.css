@@ -359,6 +359,43 @@ body {
 .scale__arrow svg { width: 18px; height: 18px; }
 .rep__sec .rep__lede { margin-top: 20px; }
 
+/* value bridge */
+.sec__split--bridge { grid-template-columns: 1fr 1fr; align-items: start; }
+.bridge { display: flex; flex-direction: column; gap: 20px; }
+.bar { display: flex; height: 14px; border-radius: 980px; overflow: hidden; background: var(--line-soft); }
+.bar__seg { min-width: 2px; transition: flex .6s var(--ease-out); }
+.bar__seg--labor { background: var(--ink); }
+.bar__seg--error { background: #8a8a90; }
+.bar__seg--speed { background: #c7c7cd; }
+.legend { list-style: none; display: grid; gap: 12px; }
+.leg { display: grid; grid-template-columns: 12px 1fr auto auto; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink); }
+.leg__sw { width: 10px; height: 10px; border-radius: 3px; }
+.leg__sw--labor { background: var(--ink); }
+.leg__sw--error { background: #8a8a90; }
+.leg__sw--speed { background: #c7c7cd; }
+.leg__l { color: var(--ink-soft); letter-spacing: -.01em; }
+.leg__v { font-variant-numeric: tabular-nums; }
+.leg__p { color: var(--ink-faint); font-variant-numeric: tabular-nums; min-width: 36px; text-align: right; }
+
+/* risk gauge */
+.gauge { display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+.gauge__track { height: 8px; border-radius: 980px; background: var(--line-soft); overflow: hidden; }
+.gauge__fill { height: 100%; background: var(--ink); border-radius: 980px; }
+.gauge__row { display: flex; align-items: baseline; gap: 12px; }
+.gauge__n { font-size: clamp(30px, 4vw, 44px); font-weight: 300; letter-spacing: -.04em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.gauge__l { font-size: 13px; color: var(--ink-soft); letter-spacing: -.01em; }
+
+/* economics scenario range */
+.econ__range { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 4px; }
+.econ__rl { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+.econ__rv { font-size: 13.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+
+/* assumptions */
+.assume { margin-top: 22px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line-soft); border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; }
+.assume__row { background: var(--bg); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
+.assume__l { font-size: 11.5px; color: var(--ink-soft); letter-spacing: -.01em; line-height: 1.3; }
+.assume__v { font-size: 18px; font-weight: 300; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+
 /* plan (Aevra output) */
 .plan__head { margin-top: 16px; font-size: clamp(22px, 3vw, 30px); font-weight: 300; letter-spacing: -.03em; line-height: 1.1; color: var(--ink); max-width: 22em; }
 .plan { margin-top: 26px; list-style: none; counter-reset: p; display: grid; gap: 18px; }
@@ -391,7 +428,10 @@ body {
   .kpi { padding: 0 18px; }
   .kpi:nth-child(odd) { padding-left: 0; border-left: none; }
   .sec__split { grid-template-columns: 1fr; gap: 28px; }
+  .sec__split--bridge { grid-template-columns: 1fr; }
   .radar { max-width: 240px; margin: 0 auto; }
+  .assume { grid-template-columns: 1fr 1fr; }
+  .leg { font-size: 12.5px; }
 }
 
 /* ---------- intro / outro ---------- */

@@ -49,7 +49,8 @@ const LABELS = {
   blocco: b('Criticità', 'Bottlenecks'),
   frequenza: b('Frequenza', 'Frequency'),
   durata: b('Durata', 'Duration'),
-  persone: b('Persone', 'People'),
+  persone: b('Volume', 'Volume'),
+  retribuzione: b('Retribuzione', 'Salary'),
   dipendenza: b('Dipendenza', 'Dependency'),
   documentazione: b('Documentazione', 'Documentation'),
   errori: b('Errori', 'Errors'),
@@ -88,7 +89,7 @@ const survey = [
   {
     id: 'companySize', type: 'single', cols: 2,
     q: b('Quante persone lavorano in azienda?', 'How many people work at the company?'),
-    options: [b('1–10', '1–10'), b('11–50', '11–50'), b('51–200', '51–200'), b('Oltre 200', 'Over 200')]
+    options: [b('1–10', '1–10'), b('11–50', '11–50'), b('51–200', '51–200'), b('201–1000', '201–1000'), b('Oltre 1000', 'Over 1000')]
   },
   {
     id: 'teamSize', type: 'single', cols: 2,
@@ -166,8 +167,14 @@ const survey = [
     ]
   },
   {
+    id: 'persone', type: 'single', cols: 2,
+    q: b('Quante persone svolgono questo processo regolarmente?', 'How many people run this process regularly?'),
+    sub: b('Conta tutti quelli che lo eseguono, non solo il tuo team.', 'Count everyone who performs it, not just your team.'),
+    options: [b('1–5', '1–5'), b('6–25', '6–25'), b('26–100', '26–100'), b('101–500', '101–500'), b('Oltre 500', 'Over 500')]
+  },
+  {
     id: 'frequenza', type: 'single', cols: 2,
-    q: b('Quanto spesso avviene?', 'How often does it happen?'),
+    q: b('Quanto spesso lo esegue ciascuna persona?', 'How often does each person run it?'),
     options: [b('Raramente', 'Rarely'), b('Ogni mese', 'Monthly'), b('Ogni settimana', 'Weekly'), b('Ogni giorno', 'Daily')]
   },
   {
@@ -176,9 +183,10 @@ const survey = [
     options: [b('Meno di 15 minuti', 'Under 15 min'), b('15–60 minuti', '15–60 min'), b('1–4 ore', '1–4 hours'), b('Più di mezza giornata', 'More than half a day')]
   },
   {
-    id: 'persone', type: 'single', cols: 2,
-    q: b('Quante persone coinvolge?', 'How many people are involved?'),
-    options: [b('1 persona', '1 person'), b('2–3 persone', '2–3 people'), b('4–10 persone', '4–10 people'), b('Più di 10', 'More than 10')]
+    id: 'retribuzione', type: 'single', cols: 2, optional: true,
+    q: b('Qual è la retribuzione media annua di chi lo svolge?', 'What’s the average annual salary of those who run it?'),
+    sub: b('Serve a stimare il costo reale del tempo. Puoi saltare.', 'Used to price the real cost of the time. Feel free to skip.'),
+    options: [b('Meno di €25k', 'Under €25k'), b('€25–40k', '€25–40k'), b('€40–60k', '€40–60k'), b('€60–90k', '€60–90k'), b('Oltre €90k', 'Over €90k')]
   },
   {
     id: 'dipendenza', type: 'single', cols: 2,
@@ -586,83 +594,114 @@ function selectedIndices(id) {
   return a.map((v) => optionIndex(id, v)).filter((x) => x >= 0);
 }
 
-// market benchmarks (fully-loaded €/h) per process area, option index of `processo`
-const COST_BY_PROCESS = [45, 55, 50, 42, 45, 50, 60, 40, 52]; // HR, Finance, Sales, Ops, Suppliers, Doc, IT, Reporting, Approvals
-const SECTOR_MULT = [0.95, 1.05, 1.20, 0.90, 1.15, 0.92, 1.00, 0.92]; // settore index
-const OCC_PER_MONTH = [0.5, 1, 4.33, 21.7];   // raro, mensile, settimanale, giornaliero
-const HOURS_PER_OCC = [0.2, 0.6, 2.5, 5];     // <15m, 15-60m, 1-4h, >mezza giornata
-const PEOPLE = [1, 2.5, 6, 12];               // 1, 2-3, 4-10, >10
-const RISK4 = [14, 44, 72, 92];               // 4-level scales -> 0-100 points
+// ---- model inputs (bottom-up, the way the impact case in the deck is built) ----
+const VOLUME_MID = [3, 14, 55, 250, 800];     // people who run the process regularly
+const RUNS_PER_YEAR = [6, 12, 46, 230];       // rarely / monthly / weekly / daily, per person
+const HOURS_PER_RUN = [0.2, 0.6, 2.5, 5];     // <15m / 15-60m / 1-4h / >half day
+const SALARY_BAND = [22000, 32000, 50000, 72000, 110000];         // annual gross €, by band
+const SECTOR_ANNUAL = [38000, 48000, 62000, 40000, 58000, 42000, 52000, 40000]; // default gross by sector
+const SECTOR_MULT = [0.98, 1.04, 1.12, 0.92, 1.10, 0.95, 1.02, 0.95];           // labor-cost adj by sector
+const ERR_FRAC = [0.03, 0.07, 0.13, 0.18];    // rework cost as a share of baseline, by error frequency
+const RISK4 = [14, 44, 72, 92];               // 4-level scales -> 0-100 exposure points
 const NUM_PROC_MID = [3, 10, 25, 50];         // numProcessi midpoints
 const MATURITY_PTS = [15, 40, 65, 90];        // automation maturity capability
 const TEAM_MID = [3, 13, 35, 75];             // teamSize headcount midpoints
-const COMPANY_MID = [5, 30, 120, 400];        // companySize headcount midpoints
-const AUTOMATABLE = 0.75;
+const COMPANY_MID = [5, 30, 120, 500, 2000];  // companySize headcount midpoints
+const WORK_HOURS_YR = 1720;                   // productive hours per FTE / year
+const OVERHEAD = 1.30;                         // salary -> fully-loaded cost multiplier
+const PRICE_RATE = 0.18;                       // value-based annual price, share of recoverable value
+const MIN_ACV = 25000;                         // Aevra minimum annual contract value
 
 function computeReport() {
   const idx = (id) => optionIndex(id, answers[id]);
   const at = (arr, id, d) => (arr[idx(id)] != null ? arr[idx(id)] : d);
 
-  const occ = at(OCC_PER_MONTH, 'frequenza', 4.33);
-  const hrs = at(HOURS_PER_OCC, 'durata', 1);
-  const ppl = at(PEOPLE, 'persone', 2.5);
+  const settoreIdx = idx('settore');
+  const sectorMult = SECTOR_MULT[settoreIdx] != null ? SECTOR_MULT[settoreIdx] : 1;
 
-  // operational-risk factors (0-100)
-  const fDep = at(RISK4, 'dipendenza', 50);
-  const fDoc = at(RISK4, 'documentazione', 50);
-  const fErr = at(RISK4, 'errori', 50);
-  const blocco = selectedIndices('blocco');
-  const fBlk = Math.min(95, blocco.length * 16);
-  const repIdx = idx('ripetitivita');
-  const fRep = RISK4[repIdx] != null ? RISK4[repIdx] : 50;
-  const matIdx = idx('maturita');
-  const maturity = MATURITY_PTS[matIdx] != null ? MATURITY_PTS[matIdx] : 40;
-  const fGap = 100 - maturity; // automation gap as an exposure axis
-  const risk = Math.round(0.28 * fDep + 0.22 * fDoc + 0.22 * fErr + 0.16 * fBlk + 0.12 * fGap);
-
-  // fully-loaded hourly cost: process-area benchmark × sector multiplier
-  const procIdx = selectedIndices('processo');
-  const baseCost = procIdx.length
-    ? procIdx.reduce((s, k) => s + (COST_BY_PROCESS[k] || 48), 0) / procIdx.length
-    : 48;
-  const sectorMult = SECTOR_MULT[idx('settore')] != null ? SECTOR_MULT[idx('settore')] : 1;
-  const cost = Math.round(baseCost * sectorMult);
-
-  // single workflow
-  const spentMonth = occ * hrs * ppl;
-  const recMonth = spentMonth * AUTOMATABLE;
-  const recYear = recMonth * 12;
-  const valMonth = recMonth * cost;
-  const valYear = recYear * cost;
-
-  // portfolio / team extrapolation, conservative, comparable processes add smaller savings
-  const PORTFOLIO_FACTOR = [1.8, 2.6, 3.6, 4.8];
-  const pf = PORTFOLIO_FACTOR[idx('numProcessi')] != null ? PORTFOLIO_FACTOR[idx('numProcessi')] : 2.6;
-  const teamRecYear = recYear * pf;
-  const teamValYear = valYear * pf;
-
-  // headcounts + company-wide extrapolation (conservative, capped)
+  // headcounts
   const teamHead = TEAM_MID[idx('teamSize')] != null ? TEAM_MID[idx('teamSize')] : 13;
   const companyHead = COMPANY_MID[idx('companySize')] != null ? COMPANY_MID[idx('companySize')] : Math.max(teamHead, 30);
-  // similar teams across the org reuse the same workflows, with diminishing returns
-  const orgScale = Math.max(1, Math.min(6, Math.sqrt(companyHead / teamHead)));
-  const companyRecYear = teamRecYear * orgScale;
-  const companyValYear = teamValYear * orgScale;
 
-  // automation potential %
-  const potential = Math.round(Math.min(92, ((repIdx >= 0 ? repIdx + 1 : 2) / 4) * 55 + (fGap / 100) * 45));
+  // volume drivers — the base of the bottom-up estimate
+  let users = VOLUME_MID[idx('persone')] != null ? VOLUME_MID[idx('persone')] : 14;
+  users = Math.min(users, Math.max(1, companyHead));      // a workflow can't be run by more than the company
+  const runs = at(RUNS_PER_YEAR, 'frequenza', 46);        // runs per person / year
+  const hoursRun = at(HOURS_PER_RUN, 'durata', 1);        // hours per run
 
-  // 12-month cumulative value (logistic adoption ramp to run-rate)
-  const monthly = teamValYear / 12;
+  // fully-loaded hourly cost of the people doing it: salary band (or sector default) × overhead
+  const salIdx = idx('retribuzione');
+  const annual = SALARY_BAND[salIdx] != null ? SALARY_BAND[salIdx]
+    : (SECTOR_ANNUAL[settoreIdx] != null ? SECTOR_ANNUAL[settoreIdx] : 46000);
+  const cost = (annual * OVERHEAD / WORK_HOURS_YR) * sectorMult;
+
+  // automation feasibility (how much of the manual time an agent removes at runtime)
+  const repIdx = idx('ripetitivita');
+  const repShare = repIdx >= 0 ? repIdx / 3 : 0.5;
+  const matIdx = idx('maturita');
+  const maturity = MATURITY_PTS[matIdx] != null ? MATURITY_PTS[matIdx] : 40;
+  const autoRate = Math.min(0.94, Math.max(0.74, 0.80 + repShare * 0.12 + (maturity / 100) * 0.03));
+
+  // baseline manual effort for THIS workflow, across its whole user base
+  const baselineHours = users * runs * hoursRun;
+  const baselineCost = baselineHours * cost;
+
+  // value bridge: labor time + error/rework reduction + throughput / risk relief
+  const laborHours = baselineHours * autoRate;
+  const laborValue = laborHours * cost;
+  const errFrac = ERR_FRAC[idx('errori')] != null ? ERR_FRAC[idx('errori')] : 0.07;
+  const errorValue = baselineCost * errFrac;
+  const blocco = selectedIndices('blocco');
+  const fDep = at(RISK4, 'dipendenza', 50);
+  const speedFrac = Math.min(0.12, blocco.length * 0.02 + (fDep / 100) * 0.05);
+  const speedValue = baselineCost * speedFrac;
+  let workflowValue = laborValue + errorValue + speedValue;
+  workflowValue = Math.min(workflowValue, baselineCost * 0.97);
+  const residualCost = Math.max(0, baselineCost - workflowValue);
+  const fteFreed = laborHours / WORK_HOURS_YR;
+
+  // operational-risk factors (0-100) for the exposure radar
+  const fDoc = at(RISK4, 'documentazione', 50);
+  const fErr = at(RISK4, 'errori', 50);
+  const fBlk = Math.min(95, blocco.length * 16);
+  const fRep = RISK4[repIdx] != null ? RISK4[repIdx] : 50;
+  const fGap = 100 - maturity;
+  const risk = Math.round(0.28 * fDep + 0.22 * fDoc + 0.22 * fErr + 0.16 * fBlk + 0.12 * fGap);
+  const potential = Math.round(autoRate * 100);
+
+  // portfolio extrapolation -> company-wide operations layer (diminishing returns + representativeness discount)
+  const nProc = NUM_PROC_MID[idx('numProcessi')] != null ? NUM_PROC_MID[idx('numProcessi')] : 10;
+  const decay = 0.82;
+  const rawFactor = (1 - Math.pow(decay, nProc)) / (1 - decay);
+  const portfolioFactor = 1 + (rawFactor - 1) * 0.7;
+  const companyValue = workflowValue * portfolioFactor;
+  const companyHours = laborHours * portfolioFactor;
+  const companyFte = companyHours / WORK_HOURS_YR;
+
+  // investment, ROI, payback (value-based pricing with an ACV floor)
+  const investment = Math.max(MIN_ACV, companyValue * PRICE_RATE);
+  const netValue = companyValue - investment;
+  const roi = companyValue / investment;
+  const paybackMonths = 12 * investment / companyValue;
+
+  // scenario band
+  const conservative = companyValue * 0.72;
+  const ambitious = companyValue * 1.22;
+
+  // 36-month cumulative value (logistic adoption ramp to company run-rate)
+  const monthlyRun = companyValue / 12;
   const cum = [];
   let acc = 0;
-  for (let m = 1; m <= 12; m++) { acc += monthly * (1 / (1 + Math.exp(-(m - 3.5) / 1.4))); cum.push(acc); }
+  for (let m = 1; m <= 36; m++) { acc += monthlyRun * (1 / (1 + Math.exp(-(m - 4) / 1.8))); cum.push(acc); }
+  const threeYear = acc;
 
   return {
-    risk, fDep, fDoc, fErr, fBlk, fRep, fGap, maturity,
-    cost, spentMonth, recMonth, recYear, valMonth, valYear,
-    pf, teamRecYear, teamValYear, potential, cum, blockCount: blocco.length,
-    teamHead, companyHead, orgScale, companyRecYear, companyValYear, ppl
+    users, runs, hoursRun, cost, annual, autoRate, sectorMult,
+    baselineHours, baselineCost, laborHours, laborValue, errorValue, speedValue,
+    workflowValue, residualCost, fteFreed,
+    risk, fDep, fDoc, fErr, fBlk, fRep, fGap, maturity, potential, blockCount: blocco.length,
+    teamHead, companyHead, nProc, portfolioFactor, companyValue, companyHours, companyFte,
+    investment, netValue, roi, paybackMonths, conservative, ambitious, cum, threeYear
   };
 }
 
@@ -729,28 +768,39 @@ function areaSVG(cum) {
   </svg>`;
 }
 
+// minutes-or-hours label for time per run
+function durLabel(h, en) { return h * 60 < 60 ? Math.round(h * 60) + ' min' : numFmt(h) + (en ? ' h' : ' h'); }
+
 function buildReport() {
   const R = computeReport();
   const band = riskBand(R.risk);
   const en = L === 'en';
   const company = (answers.azienda || '').trim();
   const dateStr = new Date().toLocaleDateString(en ? 'en-GB' : 'it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
-  const autoPct = Math.round(AUTOMATABLE * 100);
 
-  // concise, data-driven findings, ranked by severity
-  const pool = [
-    { s: R.fDep, it: R.fDep >= 70 ? 'Dipendenza critica da una sola persona.' : 'Forte dipendenza da persone chiave.', en: R.fDep >= 70 ? 'Critical dependency on one person.' : 'Strong key-person dependency.' },
+  // ---- value bridge composition (where the money comes from) ----
+  const comp = [
+    { k: 'labor', v: R.laborValue, lbl: en ? 'Labor time recovered' : 'Tempo di lavoro recuperato' },
+    { k: 'error', v: R.errorValue, lbl: en ? 'Errors & rework avoided' : 'Errori e rilavorazioni evitati' },
+    { k: 'speed', v: R.speedValue, lbl: en ? 'Throughput & risk relief' : 'Throughput e rischio ridotti' }
+  ];
+  const compTotal = comp.reduce((s, c) => s + c.v, 0) || 1;
+  const barSegs = comp.map((c) => `<div class="bar__seg bar__seg--${c.k}" style="flex:${(c.v / compTotal).toFixed(4)}"></div>`).join('');
+  const legend = comp.map((c) => `<li class="leg"><span class="leg__sw leg__sw--${c.k}"></span><span class="leg__l">${c.lbl}</span><span class="leg__v">${eur(c.v)}</span><span class="leg__p">${Math.round(c.v / compTotal * 100)}%</span></li>`).join('');
+
+  // ---- data-driven findings ----
+  const riskPool = [
+    { s: R.fDep, it: R.fDep >= 70 ? 'Dipendenza critica da una sola persona.' : 'Forte dipendenza da persone chiave.', en: R.fDep >= 70 ? 'Critical dependency on a single person.' : 'Strong key-person dependency.' },
     { s: R.fDoc, it: R.fDoc >= 70 ? 'Processo non documentato.' : 'Documentazione solo parziale.', en: R.fDoc >= 70 ? 'Process is undocumented.' : 'Documentation is only partial.' },
-    { s: R.fErr, it: R.fErr >= 70 ? 'Errori frequenti sui passaggi manuali.' : 'Errori ricorrenti da controllo manuale.', en: R.fErr >= 70 ? 'Frequent errors on manual steps.' : 'Recurring errors from manual checks.' },
-    { s: R.fBlk, it: R.blockCount + ' colli di bottiglia rilevati nel flusso.', en: R.blockCount + ' bottlenecks identified in the flow.' },
-    { s: R.fRep, it: 'Lavoro altamente ripetitivo, adatto a un agente.', en: 'Highly repetitive work, well suited to an agent.' },
-    { s: R.fGap, it: 'Ampio margine di automazione ancora inutilizzato.', en: 'Large automation gap still untapped.' }
-  ].filter((f) => f.s >= 45).sort((a, b) => b.s - a.s).slice(0, 3);
-  const timeFind = { it: numFmt(R.spentMonth) + ' ore/mese assorbite oggi dal processo.', en: numFmt(R.spentMonth) + ' hours/month absorbed by the process today.' };
-  const scaleFind = R.orgScale > 1.25
-    ? { it: 'Replicabile su ~' + numFmt(R.companyHead) + ' persone in azienda.', en: 'Replicable across ~' + numFmt(R.companyHead) + ' people company-wide.' }
-    : null;
-  const findings = [timeFind].concat(pool).concat(scaleFind ? [scaleFind] : []).slice(0, 4);
+    { s: R.fErr, it: 'Errori ricorrenti sui passaggi manuali.', en: 'Recurring errors on manual steps.' },
+    { s: R.fBlk, it: R.blockCount + ' colli di bottiglia nel flusso.', en: R.blockCount + ' bottlenecks in the flow.' }
+  ].filter((f) => f.s >= 45).sort((a, b) => b.s - a.s).slice(0, 2);
+  const findings = [
+    { it: numFmt(R.baselineHours) + ' ore/anno svolte a mano da ' + numFmt(R.users) + ' persone.', en: numFmt(R.baselineHours) + ' hours/year done by hand across ' + numFmt(R.users) + ' people.' },
+    { it: '≈ ' + numFmt(R.fteFreed) + ' FTE liberati su questo solo processo.', en: '≈ ' + numFmt(R.fteFreed) + ' FTE freed on this process alone.' }
+  ].concat(riskPool).concat([
+    { it: 'Estendibile a ~' + numFmt(R.nProc) + ' processi ricorrenti in azienda.', en: 'Extendable to ~' + numFmt(R.nProc) + ' recurring processes company-wide.' }
+  ]).slice(0, 4);
 
   const axes = [
     { v: R.fDep, short: en ? 'Depend' : 'Dipend', label: en ? 'Key-person dependency' : 'Dipendenza da persona' },
@@ -760,28 +810,52 @@ function buildReport() {
     { v: R.fGap, short: 'Gap', label: en ? 'Automation gap' : 'Gap di automazione' }
   ];
 
+  // ---- transparent assumptions ----
+  const assumptions = [
+    { l: en ? 'People running it' : 'Persone che lo svolgono', v: numFmt(R.users) },
+    { l: en ? 'Runs / person / yr' : 'Esecuzioni / persona / anno', v: numFmt(R.runs) },
+    { l: en ? 'Time / run' : 'Tempo / esecuzione', v: durLabel(R.hoursRun, en) },
+    { l: en ? 'Loaded labor cost' : 'Costo aziendale del lavoro', v: eur(R.cost) + '/h' },
+    { l: en ? 'Automation rate' : 'Tasso di automazione', v: R.potential + '%' },
+    { l: en ? 'Recurring processes' : 'Processi ricorrenti', v: numFmt(R.nProc) },
+    { l: en ? 'Portfolio factor' : 'Fattore portfolio', v: '×' + R.portfolioFactor.toFixed(1) },
+    { l: en ? 'Productive hrs / FTE' : 'Ore produttive / FTE', v: numFmt(WORK_HOURS_YR) }
+  ];
+
   const T = en ? {
-    head: 'Operational assessment', verdict: 'Company-wide recoverable value / year',
-    lede: 'recoverable by automating recurring work across the organization, without changing your tools.',
-    kRisk: 'Operational risk', kHours: 'Hours / year', kWf: 'Value / workflow', kPot: 'Automation potential',
-    exposure: 'Exposure', econ: 'Economics', scaleLbl: 'Scale',
-    wf: 'This workflow / yr', team: 'Across the team / yr', company: 'Across the company / yr', firstYear: 'First year (ramp-up)',
-    scaleHead: 'From one workflow to the whole organization.',
-    scaleBody: 'A single recurring process absorbs ' + numFmt(R.spentMonth) + ' h/month for ' + numFmt(R.ppl) + ' people. The same playbook compounds across the ' + numFmt(R.teamHead) + '-person team and the ~' + numFmt(R.companyHead) + ' people in the company, with conservative diminishing returns (×' + R.orgScale.toFixed(1) + ').',
+    head: 'Operational & value assessment', verdict: 'Recoverable value / year · company-wide',
+    lede: 'recoverable by automating recurring work across the organization — without changing your tools, migrating data, or waiting for APIs.',
+    kNet: 'Net value / yr', kNetTag: 'after platform cost', kHours: 'Hours recovered / yr', kRoi: 'Return on investment',
+    kRoiTag: R.paybackMonths.toFixed(1) + '-month payback', kPot: 'Automation potential', fteUnit: ' FTE',
+    bridgeLbl: 'Value bridge', bridgeHead: 'Where the recovered value comes from.',
+    bridgeBody: 'For one workflow run by ' + numFmt(R.users) + ' people: ' + eur(R.baselineCost) + ' of manual cost a year, of which ' + eur(R.workflowValue) + ' is recoverable.',
+    exposure: 'Operational exposure', riskLbl: 'Risk ' + tr(band).toLowerCase(),
+    econ: 'Economics', wf: 'This workflow / yr', company: 'Across the company / yr', threeYr: '3-year cumulative',
+    rangeLbl: 'Range', cons: 'Conservative', amb: 'Ambitious',
+    scaleLbl: 'Scale path', scaleHead: 'From one workflow to the operations layer.',
+    scaleBody: 'Land one painful workflow, prove execution, then expand across the ~' + numFmt(R.nProc) + ' recurring processes the team already runs. Pricing grows with live workflows and volume (×' + R.portfolioFactor.toFixed(1) + ' portfolio effect, conservative).',
+    s1: 'people on workflow 1', s2: 'recurring processes', s3: 'years compounding',
+    assumeLbl: 'Assumptions', assumeHead: 'Every number is bottom-up and editable with you.',
     planlbl: 'The plan', planHead: 'How we step in, without changing how you work.',
-    method: 'Modelled on market benchmarks. ' + autoPct + '% automatable, loaded cost about ' + eur(R.cost) + '/h. Team ≈ ' + numFmt(R.teamHead) + ', company ≈ ' + numFmt(R.companyHead) + ' people; company figure scaled ×' + R.orgScale.toFixed(1) + '.',
-    ctaLine: eur(R.companyValYear) + ' a year, recoverable. Let’s map the first workflow.', cta: 'Book a call'
+    method: 'Bottom-up model: people × runs/year × time/run × fully-loaded labor cost (salary ×' + OVERHEAD.toFixed(2) + ' / ' + numFmt(WORK_HOURS_YR) + ' h). Automation removes ' + R.potential + '% of runtime; error and throughput effects added on top. Company figure applies a conservative ×' + R.portfolioFactor.toFixed(1) + ' portfolio factor with diminishing returns. Investment priced at ' + Math.round(PRICE_RATE * 100) + '% of recovered value (min ' + eur(MIN_ACV) + ' ACV).',
+    ctaLine: eur(R.netValue) + ' net a year, ' + R.roi.toFixed(1) + '× return. Let’s map the first workflow.', cta: 'Book a call'
   } : {
-    head: 'Analisi operativa', verdict: 'Valore recuperabile in azienda / anno',
-    lede: 'recuperabili automatizzando il lavoro ricorrente in tutta l’azienda, senza cambiare i vostri strumenti.',
-    kRisk: 'Rischio operativo', kHours: 'Ore / anno', kWf: 'Valore / workflow', kPot: 'Potenziale automazione',
-    exposure: 'Esposizione', econ: 'Economia', scaleLbl: 'Scala',
-    wf: 'Questo workflow / anno', team: 'Sul team / anno', company: 'Sull’azienda / anno', firstYear: 'Primo anno (avvio)',
-    scaleHead: 'Da un workflow all’intera organizzazione.',
-    scaleBody: 'Un solo processo ricorrente assorbe ' + numFmt(R.spentMonth) + ' h/mese per ' + numFmt(R.ppl) + ' persone. Lo stesso schema si moltiplica sul team di ' + numFmt(R.teamHead) + ' persone e sulle ~' + numFmt(R.companyHead) + ' dell’azienda, con rendimenti decrescenti prudenti (×' + R.orgScale.toFixed(1) + ').',
+    head: 'Analisi operativa e di valore', verdict: 'Valore recuperabile / anno · in azienda',
+    lede: 'recuperabili automatizzando il lavoro ricorrente in tutta l’azienda — senza cambiare strumenti, migrare dati o aspettare le API.',
+    kNet: 'Valore netto / anno', kNetTag: 'al netto della piattaforma', kHours: 'Ore recuperate / anno', kRoi: 'Ritorno sull’investimento',
+    kRoiTag: 'rientro in ' + R.paybackMonths.toFixed(1) + ' mesi', kPot: 'Potenziale automazione', fteUnit: ' FTE',
+    bridgeLbl: 'Ponte del valore', bridgeHead: 'Da dove arriva il valore recuperato.',
+    bridgeBody: 'Per un workflow svolto da ' + numFmt(R.users) + ' persone: ' + eur(R.baselineCost) + ' di costo manuale all’anno, di cui ' + eur(R.workflowValue) + ' recuperabili.',
+    exposure: 'Esposizione operativa', riskLbl: 'Rischio ' + tr(band).toLowerCase(),
+    econ: 'Economia', wf: 'Questo workflow / anno', company: 'In tutta l’azienda / anno', threeYr: 'Cumulato a 3 anni',
+    rangeLbl: 'Intervallo', cons: 'Prudente', amb: 'Ambizioso',
+    scaleLbl: 'Percorso di scala', scaleHead: 'Da un workflow al layer operativo.',
+    scaleBody: 'Si parte da un workflow critico, si dimostra l’esecuzione, poi si estende ai ~' + numFmt(R.nProc) + ' processi ricorrenti che il team già gestisce. Il prezzo cresce con i workflow attivi e i volumi (effetto portfolio ×' + R.portfolioFactor.toFixed(1) + ', prudente).',
+    s1: 'persone sul workflow 1', s2: 'processi ricorrenti', s3: 'anni di accumulo',
+    assumeLbl: 'Ipotesi', assumeHead: 'Ogni numero è bottom-up e si rivede insieme a voi.',
     planlbl: 'Il piano', planHead: 'Come interveniamo, senza cambiare come lavorate.',
-    method: 'Stime su benchmark di mercato. ' + autoPct + '% automatizzabile, costo aziendale circa ' + eur(R.cost) + '/h. Team ≈ ' + numFmt(R.teamHead) + ', azienda ≈ ' + numFmt(R.companyHead) + ' persone; valore aziendale scalato ×' + R.orgScale.toFixed(1) + '.',
-    ctaLine: eur(R.companyValYear) + ' l’anno, recuperabili. Mappiamo il primo workflow.', cta: 'Prenota una call'
+    method: 'Modello bottom-up: persone × esecuzioni/anno × tempo/esecuzione × costo del lavoro fully-loaded (stipendio ×' + OVERHEAD.toFixed(2) + ' / ' + numFmt(WORK_HOURS_YR) + ' h). L’automazione rimuove il ' + R.potential + '% del tempo; effetti su errori e throughput aggiunti sopra. Il dato aziendale applica un fattore portfolio prudente ×' + R.portfolioFactor.toFixed(1) + ' con rendimenti decrescenti. Investimento al ' + Math.round(PRICE_RATE * 100) + '% del valore recuperato (min ' + eur(MIN_ACV) + ' ACV).',
+    ctaLine: eur(R.netValue) + ' netti l’anno, ritorno ' + R.roi.toFixed(1) + '×. Mappiamo il primo workflow.', cta: 'Prenota una call'
   };
 
   const plan = en ? [
@@ -800,22 +874,38 @@ function buildReport() {
 
     <div class="rep__hero">
       <span class="rep__eyebrow">${T.verdict}</span>
-      <div class="rep__heronum" data-count="${Math.round(R.companyValYear)}" data-fmt="eur">0</div>
+      <div class="rep__heronum" data-count="${Math.round(R.companyValue)}" data-fmt="eur">0</div>
       <p class="rep__lede">${T.lede}</p>
     </div>
 
     <div class="kpis">
-      <div class="kpi"><span class="kpi__n" data-count="${R.risk}" data-fmt="int">0</span><span class="kpi__l">${T.kRisk}</span><span class="kpi__t">${tr(band)}</span></div>
-      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.companyRecYear)}" data-fmt="num">0</span><span class="kpi__l">${T.kHours}</span></div>
-      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.valYear)}" data-fmt="eur">0</span><span class="kpi__l">${T.kWf}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.netValue)}" data-fmt="eur">0</span><span class="kpi__l">${T.kNet}</span><span class="kpi__t">${T.kNetTag}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${Math.round(R.companyHours)}" data-fmt="num">0</span><span class="kpi__l">${T.kHours}</span><span class="kpi__t">${numFmt(R.companyFte)}${T.fteUnit}</span></div>
+      <div class="kpi"><span class="kpi__n" data-count="${R.roi}" data-fmt="x">0</span><span class="kpi__l">${T.kRoi}</span><span class="kpi__t">${T.kRoiTag}</span></div>
       <div class="kpi"><span class="kpi__n" data-count="${R.potential}" data-fmt="pct">0</span><span class="kpi__l">${T.kPot}</span></div>
     </div>
 
     <section class="rep__sec">
-      <span class="rep__seclbl">${T.exposure}</span>
+      <span class="rep__seclbl">${T.bridgeLbl}</span>
+      <h2 class="plan__head">${T.bridgeHead}</h2>
+      <div class="sec__split sec__split--bridge">
+        <div class="bridge">
+          <div class="bar">${barSegs}</div>
+          <ul class="legend">${legend}</ul>
+        </div>
+        <ul class="findings">${findings.map((f) => `<li>${esc(tr(f))}</li>`).join('')}</ul>
+      </div>
+      <p class="rep__lede">${esc(T.bridgeBody)}</p>
+    </section>
+
+    <section class="rep__sec">
+      <span class="rep__seclbl">${T.exposure} · ${T.riskLbl}</span>
       <div class="sec__split">
         <div class="radar">${radarSVG(axes)}<div class="chart-tip" data-tip></div></div>
-        <ul class="findings">${findings.map((f) => `<li>${esc(tr(f))}</li>`).join('')}</ul>
+        <div class="gauge">
+          <div class="gauge__track"><div class="gauge__fill" style="width:${R.risk}%"></div></div>
+          <div class="gauge__row"><span class="gauge__n" data-count="${R.risk}" data-fmt="int">0</span><span class="gauge__l">${en ? 'Operational risk score (0–100)' : 'Indice di rischio operativo (0–100)'}</span></div>
+        </div>
       </div>
     </section>
 
@@ -824,10 +914,10 @@ function buildReport() {
       <div class="sec__split">
         <div class="proj__chart">${areaSVG(R.cum)}<span class="proj__cursor" data-cursor></span><span class="proj__dot" data-dot></span><div class="chart-tip" data-tip></div></div>
         <div class="econ">
-          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.valYear)}" data-fmt="eur">0</span><span class="econ__l">${T.wf}</span></div>
-          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.teamValYear)}" data-fmt="eur">0</span><span class="econ__l">${T.team}</span></div>
-          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.companyValYear)}" data-fmt="eur">0</span><span class="econ__l">${T.company}</span></div>
-          <div class="econ__row econ__row--soft"><span class="econ__n" data-count="${Math.round(R.cum[R.cum.length - 1])}" data-fmt="eur">0</span><span class="econ__l">${T.firstYear}</span></div>
+          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.workflowValue)}" data-fmt="eur">0</span><span class="econ__l">${T.wf}</span></div>
+          <div class="econ__row"><span class="econ__n" data-count="${Math.round(R.companyValue)}" data-fmt="eur">0</span><span class="econ__l">${T.company}</span></div>
+          <div class="econ__row econ__row--soft"><span class="econ__n" data-count="${Math.round(R.threeYear)}" data-fmt="eur">0</span><span class="econ__l">${T.threeYr}</span></div>
+          <div class="econ__range"><span class="econ__rl">${T.rangeLbl}</span><span class="econ__rv">${T.cons} ${eur(R.conservative)} — ${T.amb} ${eur(R.ambitious)}</span></div>
         </div>
       </div>
     </section>
@@ -836,13 +926,19 @@ function buildReport() {
       <span class="rep__seclbl">${T.scaleLbl}</span>
       <h2 class="plan__head">${T.scaleHead}</h2>
       <div class="scale">
-        <div class="scale__step"><span class="scale__n" data-count="${Math.round(R.ppl)}" data-fmt="int">0</span><span class="scale__l">${T.wf}</span><span class="scale__v">${eur(R.valYear)}</span></div>
+        <div class="scale__step"><span class="scale__n" data-count="${Math.round(R.users)}" data-fmt="int">0</span><span class="scale__l">${T.s1}</span><span class="scale__v">${eur(R.workflowValue)}</span></div>
         <div class="scale__arrow">${ICON.arrow}</div>
-        <div class="scale__step"><span class="scale__n" data-count="${R.teamHead}" data-fmt="int">0</span><span class="scale__l">${T.team}</span><span class="scale__v">${eur(R.teamValYear)}</span></div>
+        <div class="scale__step"><span class="scale__n" data-count="${R.nProc}" data-fmt="int">0</span><span class="scale__l">${T.s2}</span><span class="scale__v">${eur(R.companyValue)}</span></div>
         <div class="scale__arrow">${ICON.arrow}</div>
-        <div class="scale__step"><span class="scale__n" data-count="${R.companyHead}" data-fmt="int">0</span><span class="scale__l">${T.company}</span><span class="scale__v">${eur(R.companyValYear)}</span></div>
+        <div class="scale__step"><span class="scale__n" data-count="3" data-fmt="int">0</span><span class="scale__l">${T.s3}</span><span class="scale__v">${eur(R.threeYear)}</span></div>
       </div>
       <p class="rep__lede">${esc(T.scaleBody)}</p>
+    </section>
+
+    <section class="rep__sec">
+      <span class="rep__seclbl">${T.assumeLbl}</span>
+      <h2 class="plan__head">${T.assumeHead}</h2>
+      <div class="assume">${assumptions.map((a) => `<div class="assume__row"><span class="assume__l">${a.l}</span><span class="assume__v">${esc(a.v)}</span></div>`).join('')}</div>
     </section>
 
     <section class="rep__sec rep__sec--plan">
@@ -863,7 +959,9 @@ function buildReport() {
   requestAnimationFrame(() => {
     screen.querySelectorAll('[data-count]').forEach((elm) => {
       const to = parseFloat(elm.dataset.count);
-      const f = elm.dataset.fmt === 'eur' ? eur : elm.dataset.fmt === 'num' ? numFmt : elm.dataset.fmt === 'pct' ? ((x) => Math.round(x) + '%') : ((x) => Math.round(x));
+      const fmt = elm.dataset.fmt;
+      const f = fmt === 'eur' ? eur : fmt === 'num' ? numFmt : fmt === 'pct' ? ((x) => Math.round(x) + '%')
+        : fmt === 'x' ? ((x) => x.toFixed(1) + '×') : ((x) => Math.round(x));
       countUp(elm, to, f, 1200);
     });
     attachRadarTip(screen);
