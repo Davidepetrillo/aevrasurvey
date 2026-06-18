@@ -596,7 +596,7 @@ function selectedIndices(id) {
 
 // ---- model inputs (bottom-up, the way the impact case in the deck is built) ----
 const VOLUME_MID = [3, 14, 55, 250, 800];     // people who run the process regularly
-const RUNS_PER_YEAR = [6, 12, 46, 230];       // rarely / monthly / weekly / daily, per person
+const RUNS_PER_YEAR = [6, 12, 48, 240];       // rarely / monthly / weekly (48 wk) / daily (5×48), per person
 const HOURS_PER_RUN = [0.2, 0.6, 2.5, 5];     // <15m / 15-60m / 1-4h / >half day
 const SALARY_BAND = [22000, 32000, 50000, 72000, 110000];         // annual gross €, by band
 const SECTOR_ANNUAL = [38000, 48000, 62000, 40000, 58000, 42000, 52000, 40000]; // default gross by sector
@@ -611,6 +611,13 @@ const WORK_HOURS_YR = 1720;                   // productive hours per FTE / year
 const OVERHEAD = 1.30;                         // salary -> fully-loaded cost multiplier
 const PRICE_RATE = 0.18;                       // value-based annual price, share of recoverable value
 const MIN_ACV = 25000;                         // Aevra minimum annual contract value
+
+// per process-area automatability nudge (index = `processo` option)
+// HR, Finance, Sales, Operations, Suppliers, Docs/compliance, IT, Reporting/data-entry, Approvals
+const PROC_AUTO_ADJ = [0.02, 0.03, -0.03, 0.01, 0.02, 0.03, 0.00, 0.05, 0.04];
+// software types that rarely expose clean APIs (index = `tipoGestionale` option) — Aevra's wedge
+// ERP, CRM, HR/payroll, accounting, procurement, tenders/PA, DMS, ticketing, custom in-house
+const SOFTWARE_LEGACY = [1, 0, 0, 1, 1, 1, 1, 0, 1];
 
 function computeReport() {
   const idx = (id) => optionIndex(id, answers[id]);
@@ -635,12 +642,27 @@ function computeReport() {
     : (SECTOR_ANNUAL[settoreIdx] != null ? SECTOR_ANNUAL[settoreIdx] : 46000);
   const cost = (annual * OVERHEAD / WORK_HOURS_YR) * sectorMult;
 
+  // process areas selected for automation -> per-area automatability nudge
+  const procIdx = selectedIndices('processo');
+  const procAutoAdj = procIdx.length
+    ? procIdx.reduce((s, k) => s + (PROC_AUTO_ADJ[k] || 0), 0) / procIdx.length : 0;
+
+  // software landscape -> how much runs on legacy / no-API systems (Aevra's edge)
+  const swIdx = selectedIndices('tipoGestionale');
+  const noApiShare = swIdx.length ? swIdx.filter((k) => SOFTWARE_LEGACY[k]).length / swIdx.length : 0;
+  const swFitAdj = noApiShare * 0.03;
+
+  // tool fragmentation -> more glue work, more handoffs, more errors
+  const toolCount = selectedIndices('strumenti').length;
+  const fragmentation = Math.min(1, toolCount / 5);
+
   // automation feasibility (how much of the manual time an agent removes at runtime)
   const repIdx = idx('ripetitivita');
   const repShare = repIdx >= 0 ? repIdx / 3 : 0.5;
   const matIdx = idx('maturita');
   const maturity = MATURITY_PTS[matIdx] != null ? MATURITY_PTS[matIdx] : 40;
-  const autoRate = Math.min(0.94, Math.max(0.74, 0.80 + repShare * 0.12 + (maturity / 100) * 0.03));
+  const autoRate = Math.min(0.95, Math.max(0.74,
+    0.80 + repShare * 0.12 + (maturity / 100) * 0.03 + procAutoAdj + swFitAdj));
 
   // baseline manual effort for THIS workflow, across its whole user base
   const baselineHours = users * runs * hoursRun;
@@ -649,11 +671,12 @@ function computeReport() {
   // value bridge: labor time + error/rework reduction + throughput / risk relief
   const laborHours = baselineHours * autoRate;
   const laborValue = laborHours * cost;
-  const errFrac = ERR_FRAC[idx('errori')] != null ? ERR_FRAC[idx('errori')] : 0.07;
+  const errFracBase = ERR_FRAC[idx('errori')] != null ? ERR_FRAC[idx('errori')] : 0.07;
+  const errFrac = Math.min(0.24, errFracBase + fragmentation * 0.05);   // fragmented tools add rework
   const errorValue = baselineCost * errFrac;
   const blocco = selectedIndices('blocco');
   const fDep = at(RISK4, 'dipendenza', 50);
-  const speedFrac = Math.min(0.12, blocco.length * 0.02 + (fDep / 100) * 0.05);
+  const speedFrac = Math.min(0.15, blocco.length * 0.02 + (fDep / 100) * 0.05 + fragmentation * 0.03);
   const speedValue = baselineCost * speedFrac;
   let workflowValue = laborValue + errorValue + speedValue;
   workflowValue = Math.min(workflowValue, baselineCost * 0.97);
@@ -678,6 +701,17 @@ function computeReport() {
   const companyHours = laborHours * portfolioFactor;
   const companyFte = companyHours / WORK_HOURS_YR;
 
+  // team tier sits between the single workflow and the whole company, by headcount share
+  const teamShare = Math.max(0.15, Math.min(0.9, teamHead / Math.max(teamHead, companyHead)));
+  const teamValue = workflowValue + (companyValue - workflowValue) * teamShare;
+
+  // which value lever the customer cares about most (from `obiettivo`)
+  const goals = selectedIndices('obiettivo');
+  const goalLever = goals.includes(0) || goals.includes(5) ? 'error'
+    : goals.includes(4) ? 'risk'
+      : goals.includes(2) || goals.includes(3) ? 'speed'
+        : 'labor';
+
   // investment, ROI, payback (value-based pricing with an ACV floor)
   const investment = Math.max(MIN_ACV, companyValue * PRICE_RATE);
   const netValue = companyValue - investment;
@@ -701,7 +735,8 @@ function computeReport() {
     workflowValue, residualCost, fteFreed,
     risk, fDep, fDoc, fErr, fBlk, fRep, fGap, maturity, potential, blockCount: blocco.length,
     teamHead, companyHead, nProc, portfolioFactor, companyValue, companyHours, companyFte,
-    investment, netValue, roi, paybackMonths, conservative, ambitious, cum, threeYear
+    investment, netValue, roi, paybackMonths, conservative, ambitious, cum, threeYear,
+    procAutoAdj, noApiShare, fragmentation, toolCount, teamValue, teamShare, goalLever
   };
 }
 
@@ -788,19 +823,42 @@ function buildReport() {
   const barSegs = comp.map((c) => `<div class="bar__seg bar__seg--${c.k}" style="flex:${(c.v / compTotal).toFixed(4)}"></div>`).join('');
   const legend = comp.map((c) => `<li class="leg"><span class="leg__sw leg__sw--${c.k}"></span><span class="leg__l">${c.lbl}</span><span class="leg__v">${eur(c.v)}</span><span class="leg__p">${Math.round(c.v / compTotal * 100)}%</span></li>`).join('');
 
-  // ---- data-driven findings ----
+  // ---- data-driven findings, tuned to what the customer told us ----
+  const swName = (answers.nomeGestionale || '').trim();
+  const hasGoals = Array.isArray(answers.obiettivo) && answers.obiettivo.length > 0;
+  const goalFind = {
+    labor: { it: 'Obiettivo: liberare tempo — ' + numFmt(R.fteFreed) + ' FTE su questo solo processo.', en: 'Goal: free up time — ' + numFmt(R.fteFreed) + ' FTE on this process alone.' },
+    error: { it: 'Obiettivo: ridurre errori — ' + eur(R.errorValue) + '/anno di rilavorazioni evitate.', en: 'Goal: cut errors — ' + eur(R.errorValue) + '/yr of rework avoided.' },
+    risk: { it: 'Obiettivo: meno dipendenza — esecuzione resa indipendente dalle persone chiave.', en: 'Goal: less key-person risk — execution made independent of key people.' },
+    speed: { it: 'Obiettivo: standardizzare e tracciare — ogni esecuzione identica e auditabile.', en: 'Goal: standardize & track — every run identical and auditable.' }
+  }[R.goalLever];
+
+  const swFind = (selectedIndices('tipoGestionale').length || swName) ? {
+    it: (swName ? swName : 'Gestionale') + (R.noApiShare >= 0.5 ? ', senza API pulite: ' : ': ') + 'Aevra automatizza dall’interfaccia, com’è.',
+    en: (swName ? swName : 'Business software') + (R.noApiShare >= 0.5 ? ', no clean APIs: ' : ': ') + 'Aevra automates from the UI, as-is.'
+  } : null;
+  const fragFind = R.toolCount >= 3 ? {
+    it: R.toolCount + ' strumenti diversi nel flusso: passaggi manuali e dati che rimbalzano.',
+    en: R.toolCount + ' separate tools in the flow: manual handoffs and data bouncing around.'
+  } : null;
+
   const riskPool = [
     { s: R.fDep, it: R.fDep >= 70 ? 'Dipendenza critica da una sola persona.' : 'Forte dipendenza da persone chiave.', en: R.fDep >= 70 ? 'Critical dependency on a single person.' : 'Strong key-person dependency.' },
     { s: R.fDoc, it: R.fDoc >= 70 ? 'Processo non documentato.' : 'Documentazione solo parziale.', en: R.fDoc >= 70 ? 'Process is undocumented.' : 'Documentation is only partial.' },
     { s: R.fErr, it: 'Errori ricorrenti sui passaggi manuali.', en: 'Recurring errors on manual steps.' },
     { s: R.fBlk, it: R.blockCount + ' colli di bottiglia nel flusso.', en: R.blockCount + ' bottlenecks in the flow.' }
   ].filter((f) => f.s >= 45).sort((a, b) => b.s - a.s).slice(0, 2);
-  const findings = [
+
+  const findings = [hasGoals ? goalFind : null,
     { it: numFmt(R.baselineHours) + ' ore/anno svolte a mano da ' + numFmt(R.users) + ' persone.', en: numFmt(R.baselineHours) + ' hours/year done by hand across ' + numFmt(R.users) + ' people.' },
-    { it: '≈ ' + numFmt(R.fteFreed) + ' FTE liberati su questo solo processo.', en: '≈ ' + numFmt(R.fteFreed) + ' FTE freed on this process alone.' }
+    { it: '≈ ' + numFmt(R.fteFreed) + ' FTE liberati su questo solo processo.', en: '≈ ' + numFmt(R.fteFreed) + ' FTE freed on this process alone.' },
+    swFind, fragFind
   ].concat(riskPool).concat([
-    { it: 'Estendibile a ~' + numFmt(R.nProc) + ' processi ricorrenti in azienda.', en: 'Extendable to ~' + numFmt(R.nProc) + ' recurring processes company-wide.' }
-  ]).slice(0, 4);
+    { it: 'Estendibile ai ~' + numFmt(R.nProc) + ' processi ricorrenti dell’azienda.', en: 'Extendable to the ~' + numFmt(R.nProc) + ' recurring processes company-wide.' }
+  ]).filter(Boolean).slice(0, 5);
+
+  // process description, echoed back as the captured workflow
+  const descr = (answers.descrizione || '').trim();
 
   const axes = [
     { v: R.fDep, short: en ? 'Depend' : 'Dipend', label: en ? 'Key-person dependency' : 'Dipendenza da persona' },
@@ -834,7 +892,8 @@ function buildReport() {
     rangeLbl: 'Range', cons: 'Conservative', amb: 'Ambitious',
     scaleLbl: 'Scale path', scaleHead: 'From one workflow to the operations layer.',
     scaleBody: 'Land one painful workflow, prove execution, then expand across the ~' + numFmt(R.nProc) + ' recurring processes the team already runs. Pricing grows with live workflows and volume (×' + R.portfolioFactor.toFixed(1) + ' portfolio effect, conservative).',
-    s1: 'people on workflow 1', s2: 'recurring processes', s3: 'years compounding',
+    s1: 'people on workflow 1', sTeam: 'people on the team', s2: 'recurring processes', s3: 'years compounding',
+    capturedLbl: 'Captured workflow',
     assumeLbl: 'Assumptions', assumeHead: 'Every number is bottom-up and editable with you.',
     planlbl: 'The plan', planHead: 'How we step in, without changing how you work.',
     method: 'Bottom-up model: people × runs/year × time/run × fully-loaded labor cost (salary ×' + OVERHEAD.toFixed(2) + ' / ' + numFmt(WORK_HOURS_YR) + ' h). Automation removes ' + R.potential + '% of runtime; error and throughput effects added on top. Company figure applies a conservative ×' + R.portfolioFactor.toFixed(1) + ' portfolio factor with diminishing returns. Investment priced at ' + Math.round(PRICE_RATE * 100) + '% of recovered value (min ' + eur(MIN_ACV) + ' ACV).',
@@ -851,7 +910,8 @@ function buildReport() {
     rangeLbl: 'Intervallo', cons: 'Prudente', amb: 'Ambizioso',
     scaleLbl: 'Percorso di scala', scaleHead: 'Da un workflow al layer operativo.',
     scaleBody: 'Si parte da un workflow critico, si dimostra l’esecuzione, poi si estende ai ~' + numFmt(R.nProc) + ' processi ricorrenti che il team già gestisce. Il prezzo cresce con i workflow attivi e i volumi (effetto portfolio ×' + R.portfolioFactor.toFixed(1) + ', prudente).',
-    s1: 'persone sul workflow 1', s2: 'processi ricorrenti', s3: 'anni di accumulo',
+    s1: 'persone sul workflow 1', sTeam: 'persone nel team', s2: 'processi ricorrenti', s3: 'anni di accumulo',
+    capturedLbl: 'Workflow rilevato',
     assumeLbl: 'Ipotesi', assumeHead: 'Ogni numero è bottom-up e si rivede insieme a voi.',
     planlbl: 'Il piano', planHead: 'Come interveniamo, senza cambiare come lavorate.',
     method: 'Modello bottom-up: persone × esecuzioni/anno × tempo/esecuzione × costo del lavoro fully-loaded (stipendio ×' + OVERHEAD.toFixed(2) + ' / ' + numFmt(WORK_HOURS_YR) + ' h). L’automazione rimuove il ' + R.potential + '% del tempo; effetti su errori e throughput aggiunti sopra. Il dato aziendale applica un fattore portfolio prudente ×' + R.portfolioFactor.toFixed(1) + ' con rendimenti decrescenti. Investimento al ' + Math.round(PRICE_RATE * 100) + '% del valore recuperato (min ' + eur(MIN_ACV) + ' ACV).',
@@ -896,6 +956,7 @@ function buildReport() {
         <ul class="findings">${findings.map((f) => `<li>${esc(tr(f))}</li>`).join('')}</ul>
       </div>
       <p class="rep__lede">${esc(T.bridgeBody)}</p>
+      ${descr ? `<blockquote class="rep__quote"><span class="rep__quotelbl">${T.capturedLbl}</span>“${esc(descr)}”</blockquote>` : ''}
     </section>
 
     <section class="rep__sec">
@@ -927,6 +988,8 @@ function buildReport() {
       <h2 class="plan__head">${T.scaleHead}</h2>
       <div class="scale">
         <div class="scale__step"><span class="scale__n" data-count="${Math.round(R.users)}" data-fmt="int">0</span><span class="scale__l">${T.s1}</span><span class="scale__v">${eur(R.workflowValue)}</span></div>
+        <div class="scale__arrow">${ICON.arrow}</div>
+        <div class="scale__step"><span class="scale__n" data-count="${R.teamHead}" data-fmt="int">0</span><span class="scale__l">${T.sTeam}</span><span class="scale__v">${eur(R.teamValue)}</span></div>
         <div class="scale__arrow">${ICON.arrow}</div>
         <div class="scale__step"><span class="scale__n" data-count="${R.nProc}" data-fmt="int">0</span><span class="scale__l">${T.s2}</span><span class="scale__v">${eur(R.companyValue)}</span></div>
         <div class="scale__arrow">${ICON.arrow}</div>
